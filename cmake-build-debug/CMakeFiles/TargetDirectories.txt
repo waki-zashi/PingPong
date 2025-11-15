@@ -1,0 +1,4 @@
+C:/Users/Admin/Desktop/task_for_acos/cmake-build-debug/CMakeFiles/client.dir
+C:/Users/Admin/Desktop/task_for_acos/cmake-build-debug/CMakeFiles/server.dir
+C:/Users/Admin/Desktop/task_for_acos/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/Admin/Desktop/task_for_acos/cmake-build-debug/CMakeFiles/rebuild_cache.dir
