@@ -1,133 +1,109 @@
+
+// server.cpp
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 #include <iostream>
-#include <string>
-#include <thread>
-#include <chrono>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <cstring>
 
-#pragma comment(lib, "ws2_32.lib")
+const char* SOCKET_PATH = "/tmp/pingpong.sock";
+const int   MAX_PINGS   = 5;   // <-- how many ping/pong exchanges we allow
 
-class PongServer {
-private:
-    SOCKET serverSocket = INVALID_SOCKET;
-    SOCKET clientSocket = INVALID_SOCKET;
-    bool running = true;
-    const int PORT = 8080;
-
-public:
-    PongServer() {
-        // Initialize Winsock
-        WSADATA wsaData;
-        int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (result != 0) {
-            std::cerr << "WSAStartup failed: " << result << std::endl;
-            return;
+bool read_line(int fd, std::string &out) {
+    out.clear();
+    char ch;
+    while (true) {
+        ssize_t n = ::read(fd, &ch, 1);
+        if (n == 0) {
+            // client closed connection
+            return false;
         }
+        if (n < 0) {
+            perror("read");
+            return false;
+        }
+        if (ch == '\n') {
+            return true;
+        }
+        out.push_back(ch);
     }
-
-    ~PongServer() {
-        cleanup();
-        WSACleanup();
-    }
-
-    void cleanup() {
-        if (clientSocket != INVALID_SOCKET) {
-            closesocket(clientSocket);
-        }
-        if (serverSocket != INVALID_SOCKET) {
-            closesocket(serverSocket);
-        }
-    }
-
-    void run() {
-        std::cout << "Pong Server started. Waiting for connections...\n";
-
-        // Create socket
-        serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (serverSocket == INVALID_SOCKET) {
-            std::cerr << "Socket creation error: " << WSAGetLastError() << std::endl;
-            return;
-        }
-
-        // Configure server address
-        sockaddr_in serverAddr;
-        serverAddr.sin_family = AF_INET;
-        serverAddr.sin_addr.s_addr = INADDR_ANY;
-        serverAddr.sin_port = htons(PORT);
-
-        // Bind socket
-        if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-            std::cerr << "Bind failed: " << WSAGetLastError() << std::endl;
-            closesocket(serverSocket);
-            return;
-        }
-
-        // Listen on port
-        if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
-            std::cerr << "Listen failed: " << WSAGetLastError() << std::endl;
-            closesocket(serverSocket);
-            return;
-        }
-
-        std::cout << "Server listening on port " << PORT << std::endl;
-        std::cout << "Close this window to stop the server\n\n";
-
-        while (running) {
-            // State 1: Waiting for connection
-            std::cout << "State 1: Waiting for client connection...\n";
-
-            // Accept connection
-            sockaddr_in clientAddr;
-            int clientAddrSize = sizeof(clientAddr);
-            clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
-
-            if (clientSocket == INVALID_SOCKET) {
-                std::cerr << "Accept failed: " << WSAGetLastError() << std::endl;
-                continue;
-            }
-
-            std::cout << "Client connected!\n";
-
-            char buffer[256];
-            int bytesReceived;
-
-            // Receive data from client
-            bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-            if (bytesReceived > 0) {
-                buffer[bytesReceived] = '\0';
-                std::string message(buffer);
-
-                // State 2.1: Processing request
-                std::cout << "State 2.1: Processing request: " << message << "\n";
-
-                if (message == "ping") {
-                    // State 3: Sending response
-                    std::cout << "State 3: Sending 'pong' response\n";
-
-                    // Send response
-                    std::string response = "pong";
-                    send(clientSocket, response.c_str(), response.length(), 0);
-
-                    std::cout << "Response 'pong' sent to client\n";
-                } else {
-                    // State 2.2: Error
-                    std::cout << "State 2.2: Error - unknown request: " << message << "\n";
-
-                    std::string error = "error: unknown command";
-                    send(clientSocket, error.c_str(), error.length(), 0);
-                }
-            }
-
-            closesocket(clientSocket);
-            clientSocket = INVALID_SOCKET;
-
-            std::cout << "Ready for new connection...\n\n";
-        }
-    }
-};
+}
 
 int main() {
-    PongServer server;
-    server.run();
+    ::unlink(SOCKET_PATH); // remove old socket just in case
+
+    int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd == -1) {
+        perror("socket");
+        return 1;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == -1) {
+        perror("bind");
+        ::close(listen_fd);
+        return 1;
+    }
+
+    if (::listen(listen_fd, 1) == -1) {
+        perror("listen");
+        ::close(listen_fd);
+        return 1;
+    }
+
+    std::cout << "[server] waiting for client..." << std::endl;
+    int conn_fd = ::accept(listen_fd, nullptr, nullptr);
+    if (conn_fd == -1) {
+        perror("accept");
+        ::close(listen_fd);
+        return 1;
+    }
+
+    std::cout << "[server] client connected, fd=" << conn_fd << std::endl;
+
+    int ping_count = 0;
+    std::string req;
+
+    // not an infinite loop: limited by MAX_PINGS + possible early exit
+    while (ping_count < MAX_PINGS) {
+        std::cout << "[S1] waiting for request, processed pings: " << ping_count << std::endl;
+
+        if (!read_line(conn_fd, req)) {
+            std::cout << "[server] client disconnected (EOF)" << std::endl;
+            break;
+        }
+
+        std::cout << "[S2.1] received: '" << req << "'" << std::endl;
+
+        if (req == "PING") {
+            std::string resp = "PONG\n";
+            if (::write(conn_fd, resp.c_str(), resp.size()) == -1) {
+                perror("write");
+                break;
+            }
+            ++ping_count;
+            std::cout << "[S3] sent PONG #" << ping_count << std::endl;
+        } else {
+            std::string resp = "ERROR: expected PING\n";
+            std::cout << "[S2.2] protocol error, sending ERROR" << std::endl;
+            // even if write error here - just exit
+            if (::write(conn_fd, resp.c_str(), resp.size()) == -1) {
+                perror("write");
+                break;
+            }
+            // ping_count NOT increased
+        }
+    }
+
+    std::cout << "[server] finished work, processed pings: " << ping_count
+              << " (limit: " << MAX_PINGS << ")" << std::endl;
+
+    ::close(conn_fd);
+    ::close(listen_fd);
+    ::unlink(SOCKET_PATH);
     return 0;
 }
+
