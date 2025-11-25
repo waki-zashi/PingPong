@@ -1,5 +1,3 @@
-
-// server.cpp
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -7,7 +5,7 @@
 #include <cstring>
 
 const char* SOCKET_PATH = "/tmp/pingpong.sock";
-const int   MAX_PINGS   = 5;   // <-- how many ping/pong exchanges we allow
+const int   MAX_PINGS   = 5;
 
 bool read_line(int fd, std::string &out) {
     out.clear();
@@ -15,7 +13,6 @@ bool read_line(int fd, std::string &out) {
     while (true) {
         ssize_t n = ::read(fd, &ch, 1);
         if (n == 0) {
-            // client closed connection
             return false;
         }
         if (n < 0) {
@@ -30,7 +27,7 @@ bool read_line(int fd, std::string &out) {
 }
 
 int main() {
-    ::unlink(SOCKET_PATH); // remove old socket just in case
+    ::unlink(SOCKET_PATH);
 
     int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd == -1) {
@@ -67,7 +64,6 @@ int main() {
     int ping_count = 0;
     std::string req;
 
-    // not an infinite loop: limited by MAX_PINGS + possible early exit
     while (ping_count < MAX_PINGS) {
         std::cout << "[S1] waiting for request, processed pings: " << ping_count << std::endl;
 
@@ -89,12 +85,10 @@ int main() {
         } else {
             std::string resp = "ERROR: expected PING\n";
             std::cout << "[S2.2] protocol error, sending ERROR" << std::endl;
-            // even if write error here - just exit
             if (::write(conn_fd, resp.c_str(), resp.size()) == -1) {
                 perror("write");
                 break;
             }
-            // ping_count NOT increased
         }
     }
 
@@ -106,4 +100,3 @@ int main() {
     ::unlink(SOCKET_PATH);
     return 0;
 }
-
